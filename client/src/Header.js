@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import {useContext, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import Post from "./Post";
+import { UserContext } from "./UserContext";
 
 export default function Header() {
-    const [username, setUserName] = useState(null);
+    const [ setUserInfo,userInfo] = useContext(UserContext);
 
     useEffect(() => {
         // Fetch profile information on component mount
@@ -10,17 +12,11 @@ export default function Header() {
             credentials: 'include',
         })
             .then((response) => {
-                if (response.ok) {
-                    return response.json();
-                }
-                throw new Error("Failed to fetch profile");
+                     response.json().then(userInfo=>{
+                        setUserInfo(userInfo);
+                     });
+                
             })
-            .then((userinfo) => {
-                setUserName(userinfo.username);
-            })
-            .catch((error) => {
-                console.error("Error fetching profile:", error);
-            });
     }, []);
 
     function logout() {
@@ -28,16 +24,9 @@ export default function Header() {
             method: 'POST',
             credentials: 'include',
         })
-            .then((response) => {
-                if (response.ok) {
-                    setUserName(null); // Clear username on successful logout
-                }
-            })
-            .catch((error) => {
-                console.error("Error during logout:", error);
-            });
+        setUserInfo(null);
     }
-
+ const username=userInfo?.username;
     return (
         <header>
             <Link to="/" className="logo">MyBlog</Link>
