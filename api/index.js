@@ -1,162 +1,160 @@
 const express = require('express');
 const cors = require('cors');
-const User = require("./models/User");
-const mongoose = require('mongoose');
-const cookieParser = require('cookie-parser');
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
-const multer = require('multer');
-const fs = require('fs');
-const app = express();
+const mongoose = require("mongoose");
+const User = require('./models/User');
 const Post = require('./models/Post');
-const secret = process.env.JWT_SECRET || 'asdfwxcbvnmugfhdsw567890876redfghjklnbvc4rrz';
+const bcrypt = require('bcryptjs');
+const app = express();
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
+const multer = require('multer');
 const uploadMiddleware = multer({ dest: 'uploads/' });
-app.use('/uploads', express.static(__dirname + '/uploads'));
-app.use(cors({ credentials: true, origin: 'http://localhost:3000' }));
+const fs = require('fs');
+
+const salt = bcrypt.genSaltSync(10);
+const secret = 'asdfe45we45w345wegw345werjktjwertkj';
+
+app.use(cors({credentials:true,origin:'http://localhost:3000',  methods: ['GET', 'POST'],
+}));
 app.use(express.json());
 app.use(cookieParser());
+app.use('/uploads', express.static(__dirname + '/uploads'));
 
-// MongoDB connection
 mongoose.connect('mongodb+srv://blog:kCOhlpa5R8fhvaNf@cluster0.querf.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0')
-    .then(() => console.log('MongoDB connected'))
-    .catch(err => console.log('MongoDB connection error:', err));
 
-// Middleware to verify JWT token
-const verifyToken = (req, res, next) => {
+app.post('/register', async (req,res) => {
+  const {username,password} = req.body;
+  try{
+    const userDoc = await User.create({
+      username,
+      password:bcrypt.hashSync(password,salt),
+    });
+    res.json(userDoc);
+  } catch(e) {
+    console.log(e);
+    res.status(400).json(e);
+  }
+});
+
+app.post('/login', async (req,res) => {
+  const {username,password} = req.body;
+  const userDoc = await User.findOne({username});
+  const passOk = bcrypt.compareSync(password, userDoc.password);
+  if (passOk) {
+    // logged in
+    jwt.sign({username,id:userDoc._id}, secret, {}, (err,token) => {
+      if (err) throw err;
+      res.cookie('token', token).json({
+        id:userDoc._id,
+        username,
+      });
+    });
+  } else {
+    res.status(400).json('wrong credentials');
+  }
+});
+
+app.get('/profile', (req, res) => {
     const { token } = req.cookies;
     if (!token) {
-        return res.status(401).json("Unauthorized");
+      return res.status(400).json({ error: 'Token not found' });
     }
-
+  
     jwt.verify(token, secret, {}, (err, info) => {
-        if (err) {
-            return res.status(403).json("Invalid token");
-        }
-        req.user = info; // Save user info to request
-        next();
+      if (err) {
+        return res.status(401).json({ error: 'Invalid token' });
+      }
+      res.json(info);
     });
-};
-
-// Register route
-app.post('/register', async (req, res) => {
-    const { username, password } = req.body;
-
-    if (!username || !password) {
-        return res.status(400).json("Username and password are required");
-    }
-
-    try {
-        const userDoc = await User.create({
-            username,
-            password: bcrypt.hashSync(password, 10),
-        });
-        res.json(userDoc);
-    } catch (error) {
-        res.status(500).json({ message: "Error creating user", error });
-    }
+  });
+  
+app.post('/logout', (req,res) => {
+  res.cookie('token', '').json('ok');
 });
 
-// Login route
-app.post('/login', async (req, res) => {
-    const { username, password } = req.body;
+app.post('/post', uploadMiddleware.single('file'), async (req,res) => {
+  const {originalname,path} = req.file;
+  const parts = originalname.split('.');
+  const ext = parts[parts.length - 1];
+  const newPath = path+'.'+ext;
+  fs.renameSync(path, newPath);
 
-    if (!username || !password) {
-        return res.status(400).json("Username and password are required");
+  const {token} = req.cookies;
+  jwt.verify(token, secret, {}, async (err,info) => {
+    if (err) throw err;
+    const {title,summary,content} = req.body;
+    const postDoc = await Post.create({
+      title,
+      summary,
+      content,
+      cover:newPath,
+      author:info.id,
+    });
+    res.json(postDoc);
+  });
+
+});
+
+app.put('/post',uploadMiddleware.single('file'), async (req,res) => {
+  let newPath = null;
+  if (req.file) {
+    const {originalname,path} = req.file;
+    const parts = originalname.split('.');
+    const ext = parts[parts.length - 1];
+    newPath = path+'.'+ext;
+    fs.renameSync(path, newPath);
+  }
+
+  const {token} = req.cookies;
+  jwt.verify(token, secret, {}, async (err,info) => {
+    if (err) throw err;
+    const {id,title,summary,content} = req.body;
+    const postDoc = await Post.findById(id);
+    const isAuthor = JSON.stringify(postDoc.author) === JSON.stringify(info.id);
+    if (!isAuthor) {
+      return res.status(400).json('you are not the author');
     }
+    await postDoc.update({
+      title,
+      summary,
+      content,
+      cover: newPath ? newPath : postDoc.cover,
+    });
 
-    try {
-        const userDoc = await User.findOne({ username });
-        if (!userDoc) {
-            return res.status(400).json("User not found");
-        }
+    res.json(postDoc);
+  });
 
-        const passOk = bcrypt.compareSync(password, userDoc.password);
-        if (!passOk) {
-            return res.status(400).json("Wrong credentials");
-        }
-
-        jwt.sign(
-            { username, id: userDoc._id },
-            secret,
-            {},
-            (err, token) => {
-                if (err) throw err;
-
-                res.cookie('token', token, {
-                    httpOnly: true, // Prevent JavaScript access to the cookie
-                    secure: false, // Set to true in production if using HTTPS
-                }).json("ok");
-            }
-        );
-    } catch (error) {
-        console.error("Error during login:", error);
-        res.status(500).json({ message: "Internal server error", error });
-    }
 });
 
-// Profile route
-app.get('/profile', verifyToken, (req, res) => {
-    res.json(req.user); // Return the user info from the token
+app.get('/post', async (req,res) => {
+  res.json(
+    await Post.find()
+      .populate('author', ['username'])
+      .sort({createdAt: -1})
+      .limit(20)
+  );
 });
 
-// Logout route
-app.post('/logout', (req, res) => {
-    res.cookie('token', '', { maxAge: 0 }).json('ok'); // Clear the token
-});
-
-// Post creation route with file upload
-app.post('/post', uploadMiddleware.single('file'), verifyToken, async (req, res) => {
-    const { originalname, path } = req.file;
-    const ext = originalname.split('.').pop();
-    const newPath = `${path}.${ext}`;
-    fs.renameSync(path, newPath); // Rename the file to include its extension
-
-    try {
-        const { title, summary, content } = req.body;
-        const postDoc = await Post.create({
-            title,
-            summary,
-            content,
-            cover: newPath,  // Store the relative path
-            author: req.user.id, // Use the verified user info
-        });
-
-        res.json(postDoc);
-    } catch (error) {
-        console.error("Error creating post:", error);
-        res.status(500).json({ message: "Error creating post", error });
-    }
-});
-
-// Fetch all posts route
-app.get('/post', async (req, res) => {
-    try {
-        const posts = await Post.find().populate('author', ['username']).sort({createdAt:-1}).limit(20);
-        res.json(posts);
-    } catch (error) {
-        console.error("Error fetching posts:", error);
-        res.status(500).json({ message: "Error fetching posts", error });
-    }
-});
 app.get('/post/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-
-
-
-        const postDoc = await Post.findById(id).populate('author', ['username']);
-        if (!postDoc) {
-            return res.status(404).json({ error: 'Post not found' });
-        }
-
-        res.json(postDoc);
-    } catch (error) {
-        console.error('Error fetching post:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
+    const { id } = req.params;
+  
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid post ID format' });
     }
-});
-
-// Server listening
-app.listen(4000, () => {
-    console.log("Server is running on port 4000");
-});
+  
+    try {
+      const post = await Post.findById(id).populate('author', ['username']);
+      if (!post) {
+        return res.status(404).json({ error: 'Post not found' });
+      }
+      res.json(post);  // Respond with the post data
+    } catch (error) {
+      console.error('Error fetching post:', error);
+      res.status(500).json({ error: 'Error fetching post' });
+    }
+  });
+  
+  
+  
+app.listen(4000);
+//

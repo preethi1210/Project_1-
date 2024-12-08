@@ -1,13 +1,14 @@
 const mongoose = require('mongoose');
-const { Schema, model } = mongoose;
+const {Schema,model} = mongoose;
 
 const PostSchema = new Schema({
-    title: { type: String, required: true },
-    summary: { type: String, required: true },
-    content: { type: String, required: true },
-    cover: { type: String, required: true },  // Ensure cover is a valid file path
-    createdAt: { type: Date, default: Date.now },  // Auto-generate the date
-    author:{type:Schema.Types.ObjectId,ref:'User'},
+  title:String,
+  summary:String,
+  content:String,
+  cover:String,
+  author:{type:Schema.Types.ObjectId, ref:'User'},
+}, {
+  timestamps: true,
 });
 
 const PostModel = model('Post', PostSchema);
